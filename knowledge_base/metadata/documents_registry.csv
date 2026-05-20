@@ -1,0 +1,21 @@
+﻿doc_id,title,url,version,status,topic,retrieval_eligible
+npd_main_overview_v1,ФНС: Налог на профессиональный доход — общий обзор режима,https://npd.nalog.ru/,v1_2026-05-19,active,npd_basics,true
+npd_conditions_who_can_v1,ФНС: Кто может применять налог на профессиональный доход,https://npd.nalog.ru/,v1_2026-05-19,active,eligibility,true
+npd_restrictions_who_cannot_v1,ФНС: Кто не может применять налог на профессиональный доход,https://npd.nalog.ru/faq/,v1_2026-05-19,active,restrictions,true
+npd_employment_combination_v1,ФНС: Совмещение НПД с работой по найму,https://npd.nalog.ru/faq/,v1_2026-05-19,active,employment_combination,true
+npd_registration_methods_v1,ФНС: Регистрация и снятие с учёта плательщика НПД,https://npd.nalog.ru/faq/,v1_2026-05-19,active,registration,true
+npd_tax_rates_v1,ФНС: Ставки налога на профессиональный доход 4% и 6%,https://npd.nalog.ru/,v1_2026-05-19,active,tax_rates,true
+npd_tax_deduction_v1,ФНС: Налоговый вычет 10 000 рублей для самозанятых,https://npd.nalog.ru/faq/,v1_2026-05-19,active,tax_deduction,true
+npd_tax_payment_deadlines_v1,ФНС: Начисление и оплата налога на профессиональный доход,https://npd.nalog.ru/faq/,v1_2026-05-19,active,tax_payment_deadlines,true
+npd_checks_basic_v1,ФНС: Формирование и передача чеков самозанятым,https://npd.nalog.ru/faq/,v1_2026-05-19,active,checks_basic,true
+npd_checks_corrections_v1,"ФНС: Ошибки, корректировка и аннулирование чеков НПД",https://npd.nalog.ru/faq/,v1_2026-05-19,active,checks_corrections,true
+npd_checks_penalties_v1,ФНС: Ответственность за нарушения при формировании и передаче чеков НПД,https://npd.nalog.ru/faq/,v1_2026-05-19,active,checks_penalties,true
+npd_income_limit_v1,ФНС: Лимит дохода для применения НПД,https://npd.nalog.ru/,v1_2026-05-19,active,income_limit,true
+npd_app_my_tax_v1,ФНС: Мобильное приложение «Мой налог»,https://npd.nalog.ru/app/,v1_2026-05-19,active,my_tax_app,true
+npd_web_cabinet_v1,ФНС: Веб-кабинет «Мой налог»,https://npd.nalog.ru/web-app/,v1_2026-05-19,active,my_tax_web,true
+npd_b2b_work_v1,ФНС: Работа самозанятого с юридическими лицами и ИП,https://npd.nalog.ru/html/sites/www.npd.nalog.ru/fns_2899.pdf,v1_2026-05-19,active,b2b_work,true
+npd_check_status_service_v1,ФНС: Проверка статуса налогоплательщика НПД,https://npd.nalog.ru/check-status/,v1_2026-05-19,active,status_check,true
+npd_limit_exceeding_v1,ФНС: Превышение лимита дохода по НПД,https://npd.nalog.ru/faq/,v1_2026-05-19,active,limit_exceeding,true
+npd_docs_law_422_v1,Федеральный закон №422-ФЗ — карта правовой основы НПД,https://www.consultant.ru/document/cons_doc_LAW_311977/,v1_2026-05-19,reference_only,law_reference,false
+npd_docs_my_tax_usage_v1,ФНС: Порядок использования приложения «Мой налог»,https://npd.nalog.ru/docs/,v1_2026-05-19,pending_review,my_tax_usage,false
+npd_b2b_cashless_payment_v1,ФНС: Памятка по безналичной оплате,https://npd.nalog.ru/docs/,v1_2026-05-19,excluded,cashless_payment,false
