@@ -1,0 +1,12 @@
+﻿wiki_id,file,title,topic,retrieval_eligible
+wiki_npd_basics,wiki_npd_basics.md,Mini-Wiki: Основы НПД и самозанятости,npd_basics,false
+wiki_eligibility,wiki_eligibility.md,Mini-Wiki: Кто может и кто не может применять НПД,eligibility,false
+wiki_registration,wiki_registration.md,Mini-Wiki: Регистрация и снятие с учёта НПД,registration,false
+wiki_app_my_tax,wiki_app_my_tax.md,Mini-Wiki: Приложение и веб-кабинет «Мой налог»,my_tax,false
+wiki_tax_rates_deduction_payment,wiki_tax_rates_deduction_payment.md,"Mini-Wiki: Ставки, вычет, начисление и оплата НПД",tax_rates_deduction_payment,false
+wiki_checks,wiki_checks.md,Mini-Wiki: Чеки самозанятого,checks,false
+wiki_limits,wiki_limits.md,Mini-Wiki: Лимит дохода и превышение лимита НПД,limits,false
+wiki_b2b,wiki_b2b.md,Mini-Wiki: Работа самозанятого с юрлицами и ИП,b2b,false
+glossary,glossary.md,Mini-Wiki: Глоссарий НПД,glossary,false
+fallback_rules,fallback_rules.md,Mini-Wiki: Правила fallback и границы ассистента,fallback_rules,false
+negative_scenarios,negative_scenarios.md,Mini-Wiki: Негативные и внепредметные сценарии,negative_scenarios,false
