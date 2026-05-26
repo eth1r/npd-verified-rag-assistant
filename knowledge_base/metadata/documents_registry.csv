@@ -23,3 +23,7 @@ npd_checks_timing_exceptions_v1,ФНС: Когда самозанятый дол
 npd_checks_late_missing_penalties_v1,ФНС: Что делать если самозанятый не сформировал чек вовремя и какая ответственность возможна,https://npd.nalog.ru/faq/,v1_2026-05-26,active,checks_penalties,true
 npd_b2b_work_direct_v1,ФНС: Может ли юридическое лицо или ИП работать с самозанятым,https://npd.nalog.ru/check-status/,v1_2026-05-26,active,b2b_work,true
 npd_income_limit_calendar_year_cases_v1,ФНС: Лимит дохода НПД 2.4 млн рублей и календарный год,https://npd.nalog.ru/,v1_2026-05-26,active,income_limit,true
+npd_property_rent_v1,NPD property rent residential and commercial real estate,https://www.nalog.gov.ru/rn91/ifns/ifns7/info/15126898/,v1_2026-05-26,active,property_rent,true
+npd_handmade_own_products_v1,NPD handmade own products materials and resale distinction,https://npd.nalog.ru/,v1_2026-05-26,active,own_products_resale,true
+npd_transport_taxi_services_v1,NPD transport taxi cargo services and external restrictions,https://npd.nalog.ru/,v1_2026-05-26,active,transport_services,true
+npd_payment_methods_personal_card_v1,NPD payment methods personal card bank account and legal entity payments,https://npd.nalog.ru/faq/,v1_2026-05-26,active,payment_methods,true
