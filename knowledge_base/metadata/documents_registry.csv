@@ -19,3 +19,7 @@ npd_limit_exceeding_v1,ФНС: Превышение лимита дохода п
 npd_docs_law_422_v1,Федеральный закон №422-ФЗ — карта правовой основы НПД,https://www.consultant.ru/document/cons_doc_LAW_311977/,v1_2026-05-19,reference_only,law_reference,false
 npd_docs_my_tax_usage_v1,ФНС: Порядок использования приложения «Мой налог»,https://npd.nalog.ru/docs/,v1_2026-05-19,pending_review,my_tax_usage,false
 npd_b2b_cashless_payment_v1,ФНС: Памятка по безналичной оплате,https://npd.nalog.ru/docs/,v1_2026-05-19,excluded,cashless_payment,false
+npd_checks_timing_exceptions_v1,ФНС: Когда самозанятый должен сформировать чек и когда допустим срок до 9-го числа,https://npd.nalog.ru/faq/,v1_2026-05-26,active,checks,true
+npd_checks_late_missing_penalties_v1,ФНС: Что делать если самозанятый не сформировал чек вовремя и какая ответственность возможна,https://npd.nalog.ru/faq/,v1_2026-05-26,active,checks_penalties,true
+npd_b2b_work_direct_v1,ФНС: Может ли юридическое лицо или ИП работать с самозанятым,https://npd.nalog.ru/check-status/,v1_2026-05-26,active,b2b_work,true
+npd_income_limit_calendar_year_cases_v1,ФНС: Лимит дохода НПД 2.4 млн рублей и календарный год,https://npd.nalog.ru/,v1_2026-05-26,active,income_limit,true
