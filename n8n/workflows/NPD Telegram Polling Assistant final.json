@@ -1,0 +1,1039 @@
+{
+  "name": "NPD Telegram Polling Assistant v2 - based on Evaluation Runner",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -672,
+        400
+      ],
+      "id": "415ba6f5-7518-4761-b5f5-e922f1ded94a",
+      "name": "Schedule polling trigger"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/getUpdates",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "offset",
+              "value": "={{$json.telegram_offset}}"
+            },
+            {
+              "name": "limit",
+              "value": "={{$json.telegram_limit}}"
+            },
+            {
+              "name": "timeout",
+              "value": "0"
+            },
+            {
+              "name": "allowed_updates",
+              "value": "[\"message\"]"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -256,
+        256
+      ],
+      "id": "a4812f50-d4bc-4e13-b2c8-f6654dcb5a73",
+      "name": "Telegram getUpdates"
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\n\nconst input = $input.first().json;\n\nconst updates =\n  Array.isArray(input.result)\n    ? input.result\n    : Array.isArray(input.body?.result)\n      ? input.body.result\n      : [];\n\nconst previousLastUpdateId = Number(staticData.last_update_id || 0);\n\nif (!updates.length) {\n  return [];\n}\n\nlet maxUpdateId = previousLastUpdateId;\n\nconst output = [];\n\nfor (const update of updates) {\n  const updateId = Number(update.update_id || 0);\n\n  if (!updateId || updateId <= previousLastUpdateId) {\n    continue;\n  }\n\n  if (updateId > maxUpdateId) {\n    maxUpdateId = updateId;\n  }\n\n  const msg = update.message || update.edited_message || {};\n  const text = String(msg.text || '').trim();\n\n  if (!text) {\n    continue;\n  }\n\n  const chatId = msg.chat?.id;\n  const userId = msg.from?.id;\n\n  if (!chatId || !userId) {\n    continue;\n  }\n\n  output.push({\n    json: {\n      update_id: updateId,\n      chat_id: chatId,\n      user_id: userId,\n      username: msg.from?.username || '',\n      first_name: msg.from?.first_name || '',\n      telegram_message_id: msg.message_id,\n      user_question: text,\n      question: text,\n      created_at: new Date().toISOString()\n    }\n  });\n}\n\n// ВАЖНО: обновляем last_update_id сразу в Parse node\nif (maxUpdateId > previousLastUpdateId) {\n  staticData.last_update_id = maxUpdateId;\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16,
+        -48
+      ],
+      "id": "af7670b7-4078-4e91-a350-ecfc3c3093b2",
+      "name": "Parse Telegram Updates"
+    },
+    {
+      "parameters": {
+        "jsCode": "const runId = `telegram_polling_${new Date().toISOString().replace(/[:.]/g, '-')}`;\n\nreturn $input.all().map(item => ({\n  json: {\n    ...item.json,\n    run_id: runId\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        672
+      ],
+      "id": "69b9ad9f-aa56-4347-9a1c-7589861c2044",
+      "name": "Attach run id"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputItems = $input.all();\n\nconst unsafePatterns = [\n// Прямое сокрытие или занижение доходов\n/(?:скрыть|скрывать|спрятать|прятать|утаить|утаивать|занизить|занижать)[\\s\\S]{0,60}(?:доход\\w*|выручк\\w*|плат[её]ж\\w*|оплат\\w*|поступлени\\w*)/iu,\n\n// Намеренное неотражение доходов или отдельных платежей\n/не\\s+(?:показывать|отражать|указывать|вносить|регистрировать|декларировать)[\\s\\S]{0,60}(?:доход\\w*|выручк\\w*|плат[её]ж\\w*|оплат\\w*|поступлени\\w*)/iu,\n\n// Обратный порядок слов: «доход не показывать»\n/(?:доход\\w*|выручк\\w*|плат[её]ж\\w*|оплат\\w*|поступлени\\w*)[\\s\\S]{0,60}не\\s+(?:показывать|отражать|указывать|вносить|регистрировать|декларировать)/iu,\n\n// Уклонение и обход налогов\n/(?:обойти|обходить|уклониться|уклоняться)[\\s\\S]{0,60}(?:налог\\w*|уплат\\w*|запрет\\w*|ограничени\\w*|правил\\w*)/iu,\n\n// Намеренная неуплата налога\n/как[\\s\\S]{0,30}(?<![А-Яа-яЁёA-Za-z])не\\s+платить[\\s\\S]{0,30}налог\\w*/iu,\n\n// Намеренное неформирование чека\n/(?:не\\s+формировать|не\\s+выдавать|не\\s+пробивать|не\\s+создавать)[\\s\\S]{0,40}чек\\w*/iu,\n\n// Поддельные и фиктивные чеки\n/(?:фиктивн\\w*|поддельн\\w*|фальшив\\w*|ложн\\w*)[\\s\\S]{0,30}чек\\w*/iu,\n\n/(?:сделать|создать|сформировать|подделать)[\\s\\S]{0,40}(?:фиктивн\\w*|поддельн\\w*|фальшив\\w*|ложн\\w*)[\\s\\S]{0,20}чек\\w*/iu,\n\n// Запрос схемы сокрытия или обхода\n/(?:схем\\w*|способ\\w*)[\\s\\S]{0,50}(?:скрыт\\w*|уклонени\\w*|обход\\w*|неуплат\\w*)/iu\n];\n\n// Запросы об исправлении уже совершённой ошибки.\n// Они не блокируются как попытка уклонения.\nconst correctionPatterns = [\n/(?:что\\s+делать|как\\s+исправить|как\\s+устранить)[\\s\\S]{0,80}(?:случайн\\w*|по\\s+ошибк\\w*|ошибочн\\w*|забыл\\w*|не\\s+успел\\w*|пропустил\\w*)[\\s\\S]{0,80}(?:не\\s+отразил\\w*|не\\s+указал\\w*|не\\s+вн[её]с\\w*|не\\s+сформировал\\w*|доход\\w*|плат[её]ж\\w*|чек\\w*)/iu,\n\n/(?:случайн\\w*|по\\s+ошибк\\w*|ошибочн\\w*|забыл\\w*|не\\s+успел\\w*|пропустил\\w*)[\\s\\S]{0,80}(?:не\\s+отразил\\w*|не\\s+указал\\w*|не\\s+вн[её]с\\w*|не\\s+сформировал\\w*)[\\s\\S]{0,80}(?:что\\s+делать|как\\s+исправить|как\\s+устранить)/iu\n];\n\nreturn inputItems.map((item) => {\nconst input = item.json;\n\nconst questionOriginal = String(\ninput.user_question ||\ninput.question ||\n''\n).trim();\n\nconst question = questionOriginal.toLowerCase();\n\nconst baseFields = {\n...input,\nquestion_id: input.question_id || '',\ncategory: input.category || '',\nquestion: questionOriginal,\nuser_question: questionOriginal,\nexpected_behavior: input.expected_behavior || '',\nexpected_source_doc: input.expected_source_doc || '',\nnotes: input.notes || ''\n};\n\nif (!questionOriginal) {\nreturn {\njson: {\n...baseFields,\nroute: 'blocked',\nanswer: 'Вопрос пустой. Укажите вопрос по налогу на профессиональный доход.',\nsources: [],\nsafety_reason: 'empty_question'\n}\n};\n}\n\nconst isCorrectionRequest = correctionPatterns.some((pattern) =>\npattern.test(question)\n);\n\nconst isUnsafe =\n!isCorrectionRequest &&\nunsafePatterns.some((pattern) => pattern.test(question));\n\nif (isUnsafe) {\nreturn {\njson: {\n...baseFields,\nroute: 'blocked',\nanswer: 'Я не могу помогать со скрытием доходов, уклонением от налогов или нарушением правил НПД. Могу объяснить, как правильно отражать доходы, формировать чеки и платить налог на профессиональный доход.',\nsources: [],\nsafety_reason: 'tax_evasion_request'\n}\n};\n}\n\nreturn {\njson: {\n...baseFields,\nroute: 'rag',\nsafety_reason: '',\nsafety_correction_request: isCorrectionRequest\n}\n};\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        672
+      ],
+      "id": "db46edc1-37fb-4fc6-a6b1-438a5366eb5b",
+      "name": "Safety guard"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b3915022-ad9b-4ac0-aae8-9f0595701df2",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "blocked",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        320,
+        672
+      ],
+      "id": "dca6f435-9483-4264-b9a8-95bac4aec005",
+      "name": "Is blocked request?"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => {\n  const input = item.json;\n  return {\n    json: {\n      ...input,\n      answer: input.answer,\n      telegram_answer: input.answer,\n      model: 'safety_guard',\n      prompt_tokens: 0,\n      completion_tokens: 0,\n      total_tokens: 0,\n      sources: [],\n      safety_reason: input.safety_reason,\n      status: 'blocked'\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        992,
+        544
+      ],
+      "id": "6470f35a-5c56-4766-b20c-bd11de7e3d56",
+      "name": "Format blocked answer"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "text-embedding-3-small"
+            },
+            {
+              "name": "input",
+              "value": "={{ $json.search_query || $json.search_question || $json.user_question }}"
+            },
+            {
+              "name": "encoding_format",
+              "value": "float"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        528,
+        864
+      ],
+      "id": "84c01a4b-920d-47dd-b66b-aafc78376a5f",
+      "name": "OpenAI query embedding",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VITGTgYIIrgrjJKA",
+          "name": "OpenAI Header Auth - NPD MVP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const originalItems = $('Attach run id').all();\n\nfunction bytesToText(bytes) {\n  try {\n    return new TextDecoder().decode(Uint8Array.from(bytes));\n  } catch {\n    return '';\n  }\n}\n\nfunction tryParseJson(text) {\n  if (typeof text !== 'string') return null;\n\n  const trimmed = text.trim();\n  if (!trimmed) return null;\n\n  try {\n    return JSON.parse(trimmed);\n  } catch {\n    return null;\n  }\n}\n\nfunction collectReadableStateBytes(value) {\n  const buffers = value?._readableState?.buffer;\n\n  if (!Array.isArray(buffers)) {\n    return [];\n  }\n\n  const bytes = [];\n\n  for (const item of buffers) {\n    if (item?.type === 'Buffer' && Array.isArray(item.data)) {\n      bytes.push(...item.data);\n      continue;\n    }\n\n    if (Array.isArray(item?.data)) {\n      bytes.push(...item.data);\n      continue;\n    }\n  }\n\n  return bytes;\n}\n\nfunction extractEmbeddingArrayFromText(text) {\n  if (typeof text !== 'string') return null;\n\n  const marker = '\"embedding\":[';\n  const markerIndex = text.indexOf(marker);\n\n  if (markerIndex === -1) {\n    return null;\n  }\n\n  const arrayStart = markerIndex + marker.length - 1;\n  let depth = 0;\n  let arrayEnd = -1;\n\n  for (let i = arrayStart; i < text.length; i++) {\n    const ch = text[i];\n\n    if (ch === '[') depth++;\n    if (ch === ']') depth--;\n\n    if (depth === 0) {\n      arrayEnd = i;\n      break;\n    }\n  }\n\n  if (arrayEnd === -1) return null;\n\n  const arrayText = text.slice(arrayStart, arrayEnd + 1);\n\n  try {\n    const arr = JSON.parse(arrayText);\n    if (Array.isArray(arr) && arr.every(x => typeof x === 'number')) {\n      return arr;\n    }\n  } catch {\n    return null;\n  }\n\n  return null;\n}\n\nfunction extractEmbedding(json) {\n  if (Array.isArray(json?.data?.[0]?.embedding)) {\n    return json.data[0].embedding;\n  }\n\n  if (Array.isArray(json?.body?.data?.[0]?.embedding)) {\n    return json.body.data[0].embedding;\n  }\n\n  if (Array.isArray(json?.response?.data?.[0]?.embedding)) {\n    return json.response.data[0].embedding;\n  }\n\n  if (typeof json?.body === 'string') {\n    const parsed = tryParseJson(json.body);\n    if (Array.isArray(parsed?.data?.[0]?.embedding)) {\n      return parsed.data[0].embedding;\n    }\n\n    const extracted = extractEmbeddingArrayFromText(json.body);\n    if (Array.isArray(extracted)) return extracted;\n  }\n\n  if (typeof json?.data === 'string') {\n    const parsed = tryParseJson(json.data);\n    if (Array.isArray(parsed?.data?.[0]?.embedding)) {\n      return parsed.data[0].embedding;\n    }\n\n    const extracted = extractEmbeddingArrayFromText(json.data);\n    if (Array.isArray(extracted)) return extracted;\n  }\n\n  const bytes = collectReadableStateBytes(json);\n\n  if (bytes.length > 0) {\n    const text = bytesToText(bytes);\n\n    const parsed = tryParseJson(text);\n    if (Array.isArray(parsed?.data?.[0]?.embedding)) {\n      return parsed.data[0].embedding;\n    }\n\n    const extracted = extractEmbeddingArrayFromText(text);\n    if (Array.isArray(extracted)) return extracted;\n  }\n\n  return null;\n}\n\nreturn $input.all().map((item, index) => {\n  const original = originalItems[index]?.json || {};\n  const embedding = extractEmbedding(item.json);\n\n  if (!Array.isArray(embedding)) {\n    throw new Error(\n      `Missing query embedding for item ${index}. Top-level keys: ${Object.keys(item.json || {}).join(', ')}`\n    );\n  }\n\n  return {\n    json: {\n      ...original,\n\n      qdrant_search_body: JSON.stringify({\n        vector: embedding,\n        limit: 10,\n        with_payload: true,\n        with_vector: false,\n        filter: {\n          must: [\n            {\n              key: 'status',\n              match: {\n                value: 'active'\n              }\n            },\n            {\n              key: 'retrieval_eligible',\n              match: {\n                value: true\n              }\n            }\n          ],\n          must_not: [\n            {\n              key: 'source_type',\n              match: {\n                value: 'mini_wiki'\n              }\n            }\n          ]\n        }\n      })\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        736,
+        896
+      ],
+      "id": "ea1b00b1-e152-411e-968f-111004515ea3",
+      "name": "Build Qdrant search body"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://qdrant:6333/collections/npd_knowledge_v1/points/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.qdrant_search_body }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        912,
+        912
+      ],
+      "id": "31f230cb-79ec-46e9-9a36-3a7d0ca7a9e0",
+      "name": "Qdrant RAW search",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "xKPOuQV9VOAAyuVV",
+          "name": "Qdrant Header Auth - NPD MVP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const searchItems = $input.all();\nconst originalItems = $('Build Qdrant search body').all();\n\nfunction parseStreamBuffer(json) {\n  const chunks = json?._readableState?.buffer;\n\n  if (!Array.isArray(chunks)) {\n    return null;\n  }\n\n  const bytes = [];\n\n  for (const chunk of chunks) {\n    const data = chunk?.data;\n\n    if (Array.isArray(data)) {\n      bytes.push(...data);\n    }\n  }\n\n  if (bytes.length === 0) {\n    return null;\n  }\n\n  const text = new TextDecoder().decode(Uint8Array.from(bytes));\n\n  try {\n    return JSON.parse(text);\n  } catch (error) {\n    throw new Error(`Cannot parse Qdrant stream buffer as JSON: ${error.message}`);\n  }\n}\n\nfunction extractQdrantResponse(json) {\n  // Нормальный JSON-ответ\n  if (Array.isArray(json.result)) {\n    return json;\n  }\n\n  // Если n8n завернул ответ в data/body/response\n  if (Array.isArray(json.data?.result)) {\n    return json.data;\n  }\n\n  if (Array.isArray(json.body?.result)) {\n    return json.body;\n  }\n\n  if (Array.isArray(json.response?.result)) {\n    return json.response;\n  }\n\n  // Текущий случай: n8n вернул stream/buffer\n  const parsedFromStream = parseStreamBuffer(json);\n\n  if (parsedFromStream && Array.isArray(parsedFromStream.result)) {\n    return parsedFromStream;\n  }\n\n  return {\n    result: [],\n    status: json.status || '',\n    time: json.time || ''\n  };\n}\n\nreturn searchItems.map((item, index) => {\n  const original = originalItems[index]?.json;\n\n  if (!original) {\n    throw new Error(`Original search body not found for item ${index}`);\n  }\n\n  const qdrantResponse = extractQdrantResponse(item.json);\n  const result = qdrantResponse.result || [];\n\n  const formattedResults = result.map((hit, hitIndex) => {\n    const payload = hit.payload || {};\n\n    return {\n      rank: hitIndex + 1,\n      score: hit.score,\n      id: hit.id,\n      doc_id: payload.doc_id || '',\n      chunk_id: payload.chunk_id || '',\n      title: payload.title || '',\n      url: payload.url || '',\n      topic: payload.topic || '',\n      chunk_text: payload.chunk_text || ''\n    };\n  });\n\n  return {\n    json: {\n      ...original,\n      search_results: formattedResults,\n      retrieved_doc_ids: [...new Set(formattedResults.map(r => r.doc_id).filter(Boolean))].join(','),\n      top_score: formattedResults[0]?.score || '',\n      qdrant_raw_status: qdrantResponse.status || '',\n      qdrant_result_count: formattedResults.length\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1136,
+        912
+      ],
+      "id": "85c811d7-c2ed-45e7-89e3-ad6d28fc7115",
+      "name": "Format search results"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputItems = $input.all();\n\nconst BASE_LIMIT = 5;\nconst MAX_CONTEXT_CHUNKS = 8;\nconst ANCHOR_RESULTS_COUNT = 2;\n\nconst outputItems = [];\n\nfor (const item of inputItems) {\nconst input = item.json || {};\n\nconst searchResults = Array.isArray(input.search_results)\n? input.search_results\n: [];\n\nconst allResults = searchResults\n.filter(function (result) {\nreturn Boolean(\nresult &&\nresult.doc_id &&\nresult.chunk_id &&\nresult.chunk_text\n);\n})\n.sort(function (a, b) {\nreturn Number(a.rank || 0) - Number(b.rank || 0);\n});\n\nconst cleanInput = {};\n\nfor (const key of Object.keys(input)) {\nif (\nkey !== 'qdrant_search_body' &&\nkey !== 'search_results'\n) {\ncleanInput[key] = input[key];\n}\n}\n\nif (allResults.length === 0) {\noutputItems.push({\njson: {\n...cleanInput,\nretrieved_doc_ids: '',\ntop_score: '',\nqdrant_result_count: 0,\nhas_context: false,\nretrieved_context: '',\nsources: [],\ncontext_selection: {\nbase_count: 0,\nexpanded_count: 0,\ntotal_count: 0,\nanchor_doc_ids: []\n}\n}\n});\n\ncontinue;\n\n}\n\nconst baseResults = allResults.slice(0, BASE_LIMIT);\n\nconst anchorDocIds = [];\n\nconst anchorCandidates = allResults.slice(\n0,\nANCHOR_RESULTS_COUNT\n);\n\nfor (const result of anchorCandidates) {\nconst docId = String(result.doc_id || '').trim();\n\nif (\n  docId &&\n  !anchorDocIds.includes(docId)\n) {\n  anchorDocIds.push(docId);\n}\n\n}\n\nconst selectedResults = [];\nconst selectedKeys = [];\n\nfor (const result of baseResults) {\nconst key =\nString(result.doc_id || '').trim() +\n'::' +\nString(result.chunk_id || '').trim();\n\nif (\n  key !== '::' &&\n  !selectedKeys.includes(key)\n) {\n  selectedResults.push(result);\n  selectedKeys.push(key);\n}\n\n}\n\nconst additionalCandidates = allResults.slice(BASE_LIMIT);\n\nfor (const result of additionalCandidates) {\nif (\nselectedResults.length >= MAX_CONTEXT_CHUNKS\n) {\nbreak;\n}\n\nconst resultDocId = String(\n  result.doc_id || ''\n).trim();\n\nif (!anchorDocIds.includes(resultDocId)) {\n  continue;\n}\n\nconst key =\n  resultDocId +\n  '::' +\n  String(result.chunk_id || '').trim();\n\nif (\n  key !== '::' &&\n  !selectedKeys.includes(key)\n) {\n  selectedResults.push(result);\n  selectedKeys.push(key);\n}\n\n}\n\nconst contextParts = [];\n\nfor (\nlet index = 0;\nindex < selectedResults.length;\nindex++\n) {\nconst result = selectedResults[index];\n\nconst sourceText = [\n  'SOURCE ' + (index + 1),\n  'original_rank: ' + String(result.rank || ''),\n  'doc_id: ' + String(result.doc_id || ''),\n  'chunk_id: ' + String(result.chunk_id || ''),\n  'title: ' + String(result.title || ''),\n  'url: ' + String(result.url || ''),\n  'score: ' + String(result.score || ''),\n  'text:',\n  String(result.chunk_text || '')\n].join('\\n');\n\ncontextParts.push(sourceText);\n\n}\n\nconst retrievedContext = contextParts.join(\n'\\n\\n---\\n\\n'\n);\n\nconst sources = [];\n\nfor (\nlet index = 0;\nindex < selectedResults.length;\nindex++\n) {\nconst result = selectedResults[index];\n\nsources.push({\n  rank: index + 1,\n  original_rank: result.rank || '',\n  score: result.score || '',\n  doc_id: result.doc_id || '',\n  chunk_id: result.chunk_id || '',\n  title: result.title || '',\n  url: result.url || ''\n});\n\n}\n\nconst retrievedDocIds = [];\n\nfor (const result of selectedResults) {\nconst docId = String(result.doc_id || '').trim();\n\nif (\n  docId &&\n  !retrievedDocIds.includes(docId)\n) {\n  retrievedDocIds.push(docId);\n}\n\n}\n\noutputItems.push({\njson: {\n...cleanInput,\n\n  retrieved_doc_ids: retrievedDocIds.join(','),\n\n  top_score:\n    selectedResults.length > 0\n      ? selectedResults[0].score || ''\n      : '',\n\n  qdrant_result_count: allResults.length,\n\n  has_context: selectedResults.length > 0,\n\n  retrieved_context: retrievedContext,\n\n  sources: sources,\n\n  context_selection: {\n    base_count: baseResults.length,\n    expanded_count:\n      selectedResults.length - baseResults.length,\n    total_count: selectedResults.length,\n    anchor_doc_ids: anchorDocIds\n  }\n}\n\n});\n}\n\nreturn outputItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        784
+      ],
+      "id": "0422bdb8-e9c1-4f87-9080-9ee551a4e4d8",
+      "name": "Build retrieved context"
+    },
+    {
+      "parameters": {
+        "jsCode": "const originalItems = $('Attach run id').all();\n\nfunction bytesToText(bytes) {\n  try {\n    return new TextDecoder().decode(Uint8Array.from(bytes));\n  } catch {\n    return '';\n  }\n}\n\nfunction tryParseJson(text) {\n  if (typeof text !== 'string') return null;\n\n  const trimmed = text.trim();\n  if (!trimmed) return null;\n\n  try {\n    return JSON.parse(trimmed);\n  } catch {\n    return null;\n  }\n}\n\nfunction collectReadableStateBytes(value) {\n  const buffers = value?._readableState?.buffer;\n\n  if (!Array.isArray(buffers)) {\n    return [];\n  }\n\n  const bytes = [];\n\n  for (const item of buffers) {\n    if (item?.type === 'Buffer' && Array.isArray(item.data)) {\n      bytes.push(...item.data);\n      continue;\n    }\n\n    if (Array.isArray(item?.data)) {\n      bytes.push(...item.data);\n      continue;\n    }\n  }\n\n  return bytes;\n}\n\nfunction extractEmbeddingArrayFromText(text) {\n  if (typeof text !== 'string') return null;\n\n  const marker = '\"embedding\":[';\n  const markerIndex = text.indexOf(marker);\n\n  if (markerIndex === -1) return null;\n\n  const arrayStart = markerIndex + marker.length - 1;\n  let depth = 0;\n  let arrayEnd = -1;\n\n  for (let i = arrayStart; i < text.length; i++) {\n    const ch = text[i];\n\n    if (ch === '[') depth++;\n    if (ch === ']') depth--;\n\n    if (depth === 0) {\n      arrayEnd = i;\n      break;\n    }\n  }\n\n  if (arrayEnd === -1) return null;\n\n  try {\n    const arr = JSON.parse(text.slice(arrayStart, arrayEnd + 1));\n    if (Array.isArray(arr) && arr.every(x => typeof x === 'number')) {\n      return arr;\n    }\n  } catch {\n    return null;\n  }\n\n  return null;\n}\n\nfunction extractEmbedding(json) {\n  if (Array.isArray(json?.data?.[0]?.embedding)) {\n    return json.data[0].embedding;\n  }\n\n  if (Array.isArray(json?.body?.data?.[0]?.embedding)) {\n    return json.body.data[0].embedding;\n  }\n\n  if (typeof json?.body === 'string') {\n    const parsed = tryParseJson(json.body);\n    if (Array.isArray(parsed?.data?.[0]?.embedding)) {\n      return parsed.data[0].embedding;\n    }\n\n    const extracted = extractEmbeddingArrayFromText(json.body);\n    if (Array.isArray(extracted)) return extracted;\n  }\n\n  if (typeof json?.data === 'string') {\n    const parsed = tryParseJson(json.data);\n    if (Array.isArray(parsed?.data?.[0]?.embedding)) {\n      return parsed.data[0].embedding;\n    }\n\n    const extracted = extractEmbeddingArrayFromText(json.data);\n    if (Array.isArray(extracted)) return extracted;\n  }\n\n  const bytes = collectReadableStateBytes(json);\n\n  if (bytes.length > 0) {\n    const text = bytesToText(bytes);\n\n    const parsed = tryParseJson(text);\n    if (Array.isArray(parsed?.data?.[0]?.embedding)) {\n      return parsed.data[0].embedding;\n    }\n\n    const extracted = extractEmbeddingArrayFromText(text);\n    if (Array.isArray(extracted)) return extracted;\n  }\n\n  return null;\n}\n\nreturn $input.all().map((item, index) => {\n  const original = originalItems[index]?.json || {};\n  const embedding = extractEmbedding(item.json);\n\n  if (!Array.isArray(embedding)) {\n    throw new Error(`Missing query embedding for mini-wiki item ${index}`);\n  }\n\n  return {\n    json: {\n      ...original,\n\n      qdrant_mini_wiki_search_body: JSON.stringify({\n        vector: embedding,\n        limit: 3,\n        with_payload: true,\n        with_vector: false,\n        filter: {\n          must: [\n            {\n              key: 'source_type',\n              match: {\n                value: 'mini_wiki'\n              }\n            },\n            {\n              key: 'status',\n              match: {\n                value: 'active'\n              }\n            },\n            {\n              key: 'retrieval_eligible',\n              match: {\n                value: true\n              }\n            },\n            {\n              key: 'can_be_cited',\n              match: {\n                value: false\n              }\n            }\n          ]\n        }\n      })\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        736,
+        704
+      ],
+      "id": "9f5a4ac5-4149-41d3-9844-6123f3bf6432",
+      "name": "Build MINI-WIKI search body"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://qdrant:6333/collections/npd_knowledge_v1/points/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.qdrant_mini_wiki_search_body }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        912,
+        704
+      ],
+      "id": "423e021a-7e1f-4bb6-bfa0-5b87bd72433a",
+      "name": "Qdrant MINI-WIKI search",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "xKPOuQV9VOAAyuVV",
+          "name": "Qdrant Header Auth - NPD MVP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "function bytesToText(bytes) {\n  try {\n    return new TextDecoder().decode(Uint8Array.from(bytes));\n  } catch {\n    return '';\n  }\n}\n\nfunction tryParseJson(text) {\n  if (typeof text !== 'string') return null;\n  const trimmed = text.trim();\n  if (!trimmed) return null;\n\n  try {\n    return JSON.parse(trimmed);\n  } catch {\n    return null;\n  }\n}\n\nfunction collectReadableStateBytes(value) {\n  const buffers = value?._readableState?.buffer;\n\n  if (!Array.isArray(buffers)) {\n    return [];\n  }\n\n  const bytes = [];\n\n  for (const item of buffers) {\n    if (item?.type === 'Buffer' && Array.isArray(item.data)) {\n      bytes.push(...item.data);\n      continue;\n    }\n\n    if (Array.isArray(item?.data)) {\n      bytes.push(...item.data);\n      continue;\n    }\n  }\n\n  return bytes;\n}\n\nfunction normalizeQdrantResponse(json) {\n  // Нормальный JSON от Qdrant\n  if (json?.result) {\n    return json;\n  }\n\n  if (json?.body?.result) {\n    return json.body;\n  }\n\n  if (json?.data?.result) {\n    return json.data;\n  }\n\n  // Если body/data — строка JSON\n  if (typeof json?.body === 'string') {\n    const parsed = tryParseJson(json.body);\n    if (parsed?.result) return parsed;\n  }\n\n  if (typeof json?.data === 'string') {\n    const parsed = tryParseJson(json.data);\n    if (parsed?.result) return parsed;\n  }\n\n  // Если пришёл stream/buffer от n8n\n  const bytes = collectReadableStateBytes(json);\n\n  if (bytes.length > 0) {\n    const text = bytesToText(bytes);\n    const parsed = tryParseJson(text);\n\n    if (parsed?.result) {\n      return parsed;\n    }\n\n    throw new Error(`Could not parse Qdrant buffer. Text preview: ${text.slice(0, 500)}`);\n  }\n\n  return json;\n}\n\nfunction extractPoints(qdrantResponse) {\n  const result = qdrantResponse?.result;\n\n  // /points/search обычно возвращает result как массив\n  if (Array.isArray(result)) {\n    return result;\n  }\n\n  // /points/scroll возвращает result.points\n  if (Array.isArray(result?.points)) {\n    return result.points;\n  }\n\n  return [];\n}\n\nreturn $input.all().map(item => {\n  const input = item.json;\n  const qdrantResponse = normalizeQdrantResponse(input);\n  const points = extractPoints(qdrantResponse);\n\n  const formatted = points.map((point, index) => {\n    const p = point.payload || {};\n\n    return {\n      rank: index + 1,\n      score: point.score ?? null,\n      doc_id: p.doc_id || p.wiki_id || '',\n      chunk_id: p.chunk_id || '',\n      title: p.title || '',\n      topic: p.topic || '',\n      source_type: p.source_type || 'mini_wiki',\n      can_be_cited: p.can_be_cited === true ? true : false,\n      linked_raw_documents: p.linked_raw_documents || [],\n      chunk_text: p.chunk_text || ''\n    };\n  });\n\n  return {\n    json: {\n      ...input,\n      mini_wiki_results: formatted,\n      mini_wiki_doc_ids: [...new Set(formatted.map(x => x.doc_id).filter(Boolean))],\n      mini_wiki_chunk_ids: formatted.map(x => x.chunk_id).filter(Boolean)\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        704
+      ],
+      "id": "36f7a407-b9f5-4f00-910a-dc4881c62aa1",
+      "name": "Format MINI-WIKI results"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => {\n  const input = item.json;\n  const results = input.mini_wiki_results || [];\n\n  const blocks = results.map((r, index) => {\n    return [\n      `MINI-WIKI ${index + 1}`,\n      `doc_id: ${r.doc_id}`,\n      `chunk_id: ${r.chunk_id}`,\n      `title: ${r.title}`,\n      `topic: ${r.topic}`,\n      `can_be_cited: false`,\n      `linked_raw_documents: ${Array.isArray(r.linked_raw_documents) ? r.linked_raw_documents.join(', ') : ''}`,\n      `text:`,\n      r.chunk_text\n    ].join('\\n');\n  });\n\n  return {\n    json: {\n      ...input,\n      mini_wiki_context: blocks.join('\\n\\n---\\n\\n'),\n      mini_wiki_doc_ids: input.mini_wiki_doc_ids || [],\n      mini_wiki_chunk_ids: input.mini_wiki_chunk_ids || []\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        624
+      ],
+      "id": "1e19d6fd-d7a6-41ca-ac83-3f4d32016883",
+      "name": "Build MINI-WIKI context"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1488,
+        608
+      ],
+      "id": "12bf262b-f7c2-466b-9325-a5509ea8e90c",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\nmodel: 'gpt-4.1-mini',\ntemperature: 0\n,\nmessages: [\n{\nrole: 'system',\ncontent: `Ты — проверяемый ИИ-ассистент по налогу на профессиональный доход.\n\nТвоя задача — отвечать на вопрос пользователя только на основании переданного контекста.\n\nВ контексте есть два разных слоя:\n\n1. MINI_WIKI_CONTEXT — вспомогательный слой.\n   Его можно использовать только для понимания темы, различения похожих сценариев и выбора структуры ответа.\n\n2. RAW_CONTEXT — доказательная база.\n   Только RAW_CONTEXT можно использовать для фактических утверждений и источников.\n\nГлавный принцип:\n\nЕсли RAW_CONTEXT прямо подтверждает ответ на конкретный аспект вопроса, дай короткий ответ и укажи подтверждающие RAW-источники.\n\nЕсли RAW_CONTEXT содержит сведения по общей теме, но не подтверждает именно тот аспект, который спрашивает пользователь, используй строгий fallback.\n\nТочное соответствие вопросу:\n\n1. Отвечай именно на тот аспект, который запрашивает пользователь.\n\n2. Сохраняй тип вопроса:\n\n   * «кто» требует прямо подтверждённого субъекта;\n   * «когда» и «до какого числа» требуют прямо подтверждённого срока или момента;\n   * «почему» требует прямо подтверждённой причины или основания;\n   * «что делать» требует прямо подтверждённого порядка действий;\n   * «можно ли» требует прямо подтверждённого правила допустимости;\n   * «что будет» требует прямо подтверждённых последствий;\n   * вопрос с условием «а если» требует ответа именно для указанного условия.\n\n3. Наличие в RAW_CONTEXT информации по общей теме не означает, что там есть ответ на конкретный аспект вопроса.\n\n4. Не заменяй отсутствующий ответ повторением связанных фактов или ответа на предыдущий вопрос.\n\n5. Не превращай закон, правило, документ, ограничение или законодательство в лицо или орган, который что-либо «определяет», «решает», «проверяет» или «оценивает», если RAW_CONTEXT прямо этого не утверждает.\n\n6. Не делай обратный вывод только из наличия запрета, срока, исключения или условия.\n\n7. Если источник формулирует правило только для одного случая, не утверждай автоматически противоположный случай без прямого подтверждения.\n\n8. Не расширяй вопрос новыми аспектами, которых пользователь не спрашивал.\n\nПравила доказательности:\n\n1. Каждое фактическое утверждение в ответе должно прямо подтверждаться RAW_CONTEXT.\n\n2. Источник можно указывать только тогда, когда он прямо подтверждает соответствующее утверждение.\n\n3. Не используй внешние знания, общие знания модели, предположения или логические догадки.\n\n4. Не дополняй найденные правила правдоподобными, но неподтверждёнными выводами.\n\n5. Игнорируй нерелевантные и только тематически похожие фрагменты.\n\n6. Если разные фрагменты RAW_CONTEXT относятся к разным ситуациям, не объединяй их в одно общее правило без прямого основания.\n\n7. Предпочитай короткий ответ, содержащий только необходимую подтверждённую информацию.\n\n8. Не придумывай doc_id или chunk_id.\n\n9. Указывай только те doc_id и chunk_id, которые буквально присутствуют в RAW_CONTEXT.\n\nСтрогие правила использования Mini-Wiki:\n\n1. Mini-Wiki не является доказательной базой.\n\n2. Mini-Wiki нельзя использовать как подтверждение фактов.\n\n3. Mini-Wiki нельзя указывать в разделе «Источники».\n\n4. Запрещено цитировать документы с doc_id, начинающимся на wiki_.\n\n5. Запрещено цитировать документы glossary, fallback_rules и negative_scenarios.\n\n6. Если факт есть только в MINI_WIKI_CONTEXT, но не подтверждён RAW_CONTEXT, его нельзя включать в ответ.\n\n7. Если Mini-Wiki помогает понять тему, но RAW_CONTEXT не подтверждает ответ на конкретный вопрос, используй строгий fallback.\n\n8. Никогда не упоминай пользователю Mini-Wiki, RAW_CONTEXT или внутреннее разделение контекста.\n\nСтрогое правило fallback:\n\nЕсли RAW_CONTEXT не содержит прямого подтверждения именно запрошенного аспекта вопроса, верни строго одну фразу:\n\n«В базе знаний нет достаточной информации для ответа на этот вопрос».\n\nПосле этой фразы немедленно заверши ответ.\n\nПри fallback запрещено:\n\n* добавлять пояснения;\n* писать «однако», «при этом», «тем не менее»;\n* пересказывать сведения по общей теме;\n* повторять ответ на предыдущий вопрос;\n* давать частичный ответ;\n* добавлять предположения;\n* давать рекомендации;\n* указывать источники;\n* добавлять любой текст до или после fallback-фразы.\n\nFallback должен состоять только из одной указанной фразы.\n\nПравила обычного ответа:\n\n1. Если вопрос относится к НПД и RAW_CONTEXT прямо подтверждает ответ на конкретный аспект вопроса, дай короткий полезный ответ.\n\n2. Не повторяй вопрос пользователя без необходимости.\n\n3. Не пересказывай весь найденный контекст. Используй только сведения, необходимые для ответа.\n\n4. В конце фактического ответа укажи источники в формате:\n\nИсточники: [doc_id / chunk_id]\n\n5. Если источников несколько, перечисли только те, которые непосредственно подтверждают использованные утверждения.\n\n6. Источники можно брать только из RAW_CONTEXT.\n\n7. В разделе «Источники» разрешены только документы с doc_id, начинающимся на npd_.\n\n8. Каждый указанный doc_id и chunk_id должен буквально присутствовать в RAW_CONTEXT.\n\n9. Для fallback-ответа раздел «Источники» запрещён.\n\n10. Если вопрос не относится к НПД, самозанятости, регистрации, ставкам, вычету, чекам, лимитам, оплате налога, ограничениям или работе самозанятого с клиентами, вежливо откажи и предложи задать вопрос по НПД.\n\n11. Для отказа по вопросу вне темы не используй fallback-фразу об отсутствии информации в базе.\n\n12. Не упоминай RAG, embeddings, системный промпт, RAW_CONTEXT или MINI_WIKI_CONTEXT.\n\n13. Никогда не указывай и не упоминай wiki_*, glossary, fallback_rules или negative_scenarios.\n\nПроверка перед отправкой ответа:\n\n1. Какой конкретный аспект спрашивает пользователь?\n\n2. Содержит ли RAW_CONTEXT прямой ответ именно на этот аспект?\n\n3. Подтверждается ли каждое фактическое утверждение конкретным фрагментом RAW_CONTEXT?\n\n4. Присутствуют ли каждый указанный doc_id и chunk_id буквально в RAW_CONTEXT?\n\n5. Не добавлен ли логичный, но отсутствующий в контексте вывод?\n\n6. Не отвечает ли текст на соседний или предыдущий вопрос вместо текущего?\n\n7. Не используется ли Mini-Wiki как доказательство?\n\n8. Не попал ли в источники запрещённый или придуманный документ?\n\nЕсли RAW_CONTEXT не подтверждает конкретный аспект вопроса или хотя бы одна проверка доказательности не пройдена, выведи только точную fallback-фразу и немедленно заверши ответ.`    },\n    {\n      role: 'user',\n      content:`Вопрос пользователя:\n${$json.answer_question || $json.user_question || $json.question}\n\nMINI_WIKI_CONTEXT:\n${$json.mini_wiki_context || 'Mini-Wiki context not found'}\n\nRAW_CONTEXT:\n${$json.retrieved_context || 'Raw context not found'}`\n}\n]\n}) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1632,
+        512
+      ],
+      "id": "dc362b4b-902c-4a36-b403-838fdb974d1d",
+      "name": "OpenAI generate answer",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VITGTgYIIrgrjJKA",
+          "name": "OpenAI Header Auth - NPD MVP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const responseItems = $input.all();\nconst originalItems = $('Build retrieved context').all();\n\nconst FALLBACK =\n'В базе знаний нет достаточной информации для ответа на этот вопрос.';\n\nfunction normalizeText(value) {\nreturn String(value || '').trim();\n}\n\nfunction cleanAnswer(rawAnswer) {\nconst answer = normalizeText(rawAnswer);\nconst lowerAnswer = answer.toLowerCase();\n\nconst fallbackBeginnings = [\n'в базе знаний нет достаточной информации',\n'в базе знаний недостаточно информации',\n'нет достаточной информации для ответа',\n'по базе знаний невозможно однозначно ответить'\n];\n\nconst isFallback = fallbackBeginnings.some(function (beginning) {\nreturn lowerAnswer.startsWith(beginning);\n});\n\nif (isFallback) {\nreturn {\nanswer: FALLBACK,\nisFallback: true\n};\n}\n\nreturn {\nanswer: answer,\nisFallback: false\n};\n}\n\nfunction isValidIdentifier(value) {\nconst text = normalizeText(value);\n\nif (!text) {\nreturn false;\n}\n\nfor (const char of text) {\nconst isLatinLetter =\n(char >= 'a' && char <= 'z') ||\n(char >= 'A' && char <= 'Z');\n\nconst isDigit =\n  char >= '0' && char <= '9';\n\nconst isAllowedSymbol =\n  char === '_' || char === '-';\n\nif (\n  !isLatinLetter &&\n  !isDigit &&\n  !isAllowedSymbol\n) {\n  return false;\n}\n\n}\n\nreturn true;\n}\n\nfunction extractCitations(answer) {\nconst text = normalizeText(answer);\nconst citations = [];\n\nlet searchPosition = 0;\n\nwhile (searchPosition < text.length) {\nconst openingBracket = text.indexOf(\n'[',\nsearchPosition\n);\n\nif (openingBracket === -1) {\n  break;\n}\n\nconst closingBracket = text.indexOf(\n  ']',\n  openingBracket + 1\n);\n\nif (closingBracket === -1) {\n  break;\n}\n\nconst fullMatch = text.slice(\n  openingBracket,\n  closingBracket + 1\n);\n\nconst inside = text\n  .slice(openingBracket + 1, closingBracket)\n  .trim();\n\nconst separatorPosition = inside.indexOf('/');\n\nif (separatorPosition !== -1) {\n  const docId = inside\n    .slice(0, separatorPosition)\n    .trim();\n\n  const chunkId = inside\n    .slice(separatorPosition + 1)\n    .trim();\n\n  if (\n    isValidIdentifier(docId) &&\n    isValidIdentifier(chunkId)\n  ) {\n    citations.push({\n      fullMatch: fullMatch,\n      doc_id: docId,\n      chunk_id: chunkId\n    });\n  }\n}\n\nsearchPosition = closingBracket + 1;\n\n}\n\nreturn citations;\n}\n\nfunction sourceKey(docId, chunkId) {\nreturn (\nnormalizeText(docId) +\n'::' +\nnormalizeText(chunkId)\n);\n}\n\nfunction isForbiddenSource(docId) {\nconst normalized = normalizeText(\ndocId\n).toLowerCase();\n\nif (!normalized.startsWith('npd_')) {\nreturn true;\n}\n\nif (normalized.startsWith('wiki_')) {\nreturn true;\n}\n\nif (\nnormalized === 'glossary' ||\nnormalized === 'fallback_rules' ||\nnormalized === 'negative_scenarios'\n) {\nreturn true;\n}\n\nreturn false;\n}\n\nfunction normalizeCitation(citation) {\nconst docId = normalizeText(\ncitation && citation.doc_id\n);\n\nlet chunkId = normalizeText(\ncitation && citation.chunk_id\n);\n\n/*\n\nМодель иногда сокращает полный chunk_id:\n\n\nchunk_004\n\n\nвместо:\n\n\nnpd_employment_combination_v1_chunk_004\n\n\nВосстанавливаем полный идентификатор,\nно затем обязательно проверяем его по RAW sources.\n*/\nif (\ndocId &&\nchunkId.toLowerCase().startsWith('chunk_')\n) {\nchunkId = docId + '_' + chunkId;\n}\n\nreturn {\nfullMatch: citation.fullMatch,\ndoc_id: docId,\nchunk_id: chunkId\n};\n}\n\nfunction getModelAnswer(response) {\nif (\nresponse &&\nresponse.choices &&\nresponse.choices[0] &&\nresponse.choices[0].message\n) {\nreturn normalizeText(\nresponse.choices[0].message.content\n);\n}\n\nif (\nresponse &&\nresponse.body &&\nresponse.body.choices &&\nresponse.body.choices[0] &&\nresponse.body.choices[0].message\n) {\nreturn normalizeText(\nresponse.body.choices[0].message.content\n);\n}\n\nif (\nresponse &&\nresponse.data &&\nresponse.data.choices &&\nresponse.data.choices[0] &&\nresponse.data.choices[0].message\n) {\nreturn normalizeText(\nresponse.data.choices[0].message.content\n);\n}\n\nreturn '';\n}\n\nfunction getUsage(response) {\nif (response && response.usage) {\nreturn response.usage;\n}\n\nif (\nresponse &&\nresponse.body &&\nresponse.body.usage\n) {\nreturn response.body.usage;\n}\n\nif (\nresponse &&\nresponse.data &&\nresponse.data.usage\n) {\nreturn response.data.usage;\n}\n\nreturn {};\n}\n\nfunction getModelName(response) {\nif (response && response.model) {\nreturn response.model;\n}\n\nif (\nresponse &&\nresponse.body &&\nresponse.body.model\n) {\nreturn response.body.model;\n}\n\nif (\nresponse &&\nresponse.data &&\nresponse.data.model\n) {\nreturn response.data.model;\n}\n\nreturn '';\n}\n\nreturn responseItems.map(function (item, index) {\nconst response = item.json || {};\n\nconst originalItem = originalItems[index];\nconst original = originalItem\n? originalItem.json\n: null;\n\nif (!original) {\nthrow new Error(\n'Build retrieved context output not found for item ' +\nindex\n);\n}\n\nconst rawAnswer = getModelAnswer(response);\nconst cleaned = cleanAnswer(rawAnswer);\nconst usage = getUsage(response);\n\nconst rawSources = Array.isArray(\noriginal.sources\n)\n? original.sources\n: [];\n\nconst allowedSources = rawSources.filter(\nfunction (source) {\nreturn Boolean(\nsource &&\nsource.doc_id &&\nsource.chunk_id &&\n!isForbiddenSource(source.doc_id)\n);\n}\n);\n\nconst allowedSourceKeys = new Set(\nallowedSources.map(function (source) {\nreturn sourceKey(\nsource.doc_id,\nsource.chunk_id\n);\n})\n);\n\nlet answer = cleaned.answer;\nlet isFallback = cleaned.isFallback;\n\nconst extractedCitations = isFallback\n? []\n: extractCitations(answer);\n\nconst normalizedCitations =\nextractedCitations.map(function (citation) {\nreturn normalizeCitation(citation);\n});\n\nconst invalidCitations =\nnormalizedCitations.filter(\nfunction (citation) {\nif (\nisForbiddenSource(citation.doc_id)\n) {\nreturn true;\n}\n\n    const key = sourceKey(\n      citation.doc_id,\n      citation.chunk_id\n    );\n\n    return !allowedSourceKeys.has(key);\n  }\n);\n\nconst hasMissingCitations =\n  !isFallback &&\n  normalizedCitations.length === 0;\n\nconst hasInvalidCitations =\n  invalidCitations.length > 0 ||\n  hasMissingCitations;\n\nif (hasInvalidCitations) {\nanswer = FALLBACK;\nisFallback = true;\n}\n\nlet citations = [];\n\nif (isFallback) {\nanswer = FALLBACK;\ncitations = [];\n} else {\ncitations = normalizedCitations;\n\n/*\n * Заменяем сокращённые ссылки внутри текста ответа\n * на проверенные полные идентификаторы.\n */\nfor (const citation of citations) {\n  const canonicalCitation =\n    '[' +\n    citation.doc_id +\n    ' / ' +\n    citation.chunk_id +\n    ']';\n\n  if (\n    citation.fullMatch &&\n    citation.fullMatch !== canonicalCitation\n  ) {\n    answer = answer.split(\n      citation.fullMatch\n    ).join(canonicalCitation);\n  }\n}\n\n}\n\nconst verifiedSources = citations\n.map(function (citation) {\nreturn allowedSources.find(\nfunction (source) {\nreturn (\nsourceKey(\nsource.doc_id,\nsource.chunk_id\n) ===\nsourceKey(\ncitation.doc_id,\ncitation.chunk_id\n)\n);\n}\n);\n})\n.filter(Boolean);\n\n/*\n\nУдаляем дубли источников, если модель\nсослалась на один чанк несколько раз.\n*/\nconst uniqueVerifiedSources = [];\nconst uniqueVerifiedKeys = new Set();\n\nfor (const source of verifiedSources) {\nconst key = sourceKey(\nsource.doc_id,\nsource.chunk_id\n);\n\nif (!uniqueVerifiedKeys.has(key)) {\n  uniqueVerifiedKeys.add(key);\n  uniqueVerifiedSources.push(source);\n}\n\n}\n\nconst uniqueCitations = [];\nconst uniqueCitationKeys = new Set();\n\nfor (const citation of citations) {\nconst key = sourceKey(\ncitation.doc_id,\ncitation.chunk_id\n);\n\nif (!uniqueCitationKeys.has(key)) {\n  uniqueCitationKeys.add(key);\n  uniqueCitations.push(citation);\n}\n\n}\n\nconst sourcesInAnswer = uniqueCitations\n.map(function (citation) {\nreturn (\ncitation.doc_id +\n' / ' +\ncitation.chunk_id\n);\n})\n.join(',');\n\nreturn {\njson: {\n...original,\n\n  run_id:\n    original.run_id ||\n    (\n      'telegram_polling_' +\n      new Date()\n        .toISOString()\n        .slice(0, 10)\n    ),\n\n  timestamp: new Date().toISOString(),\n\n  retrieved_doc_ids:\n    original.retrieved_doc_ids || '',\n\n  top_score:\n    original.top_score || '',\n\n  qdrant_result_count:\n    original.qdrant_result_count || 0,\n\n  has_context:\n    original.has_context === true,\n\n  answer: answer,\n\n  telegram_answer: answer,\n\n  sources_in_answer:\n    isFallback\n      ? ''\n      : sourcesInAnswer,\n\n  sources:\n    isFallback\n      ? []\n      : uniqueVerifiedSources,\n\n  model: getModelName(response),\n\n  prompt_tokens:\n    usage.prompt_tokens || 0,\n\n  completion_tokens:\n    usage.completion_tokens || 0,\n\n  total_tokens:\n    usage.total_tokens || 0,\n\n  status:\n    isFallback\n      ? 'fallback'\n      : 'answered',\n\n  full_fallback_detected:\n    isFallback,\n\n  source_verification_passed:\n    !hasInvalidCitations,\n\n  invalid_sources_detected:\n  hasMissingCitations\n    ? [\n        {\n          reason: 'missing_valid_citation'\n        }\n      ]\n    : invalidCitations.map(\n        function (citation) {\n          return {\n            doc_id: citation.doc_id,\n            chunk_id: citation.chunk_id\n          };\n        }\n      )\n}\n\n};\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1776,
+        416
+      ],
+      "id": "936d74bf-8df6-4644-84b6-9c69030838f2",
+      "name": "Format final answer"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.telegram.org/bot' + $env.TELEGRAM_BOT_TOKEN + '/sendMessage' }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $json.chat_id }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.telegram_answer || $json.answer }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2080,
+        192
+      ],
+      "id": "6a2aede4-776e-4cc6-a7c4-e668c6b1eb34",
+      "name": "Telegram sendMessage"
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\n\nconst lastUpdateId = Number(staticData.last_update_id || 0);\nconst offset = lastUpdateId > 0 ? lastUpdateId + 1 : undefined;\n\nreturn [\n  {\n    json: {\n      telegram_offset: offset,\n      telegram_limit: 10\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        384
+      ],
+      "id": "21e3c4ea-9d03-4dfc-8034-d66d738c46b1",
+      "name": "Build Telegram getUpdates Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "const LIMIT = 20;\nconst staticData = $getWorkflowStaticData('global');\n\nif (!staticData.dailyUsage) {\n  staticData.dailyUsage = {};\n}\n\nconst items = $input.all();\nconst result = [];\n\nfor (const item of items) {\n  const userId = String(item.json.user_id || '');\n  const question = String(item.json.user_question || '').trim();\n\n  if (!userId) {\n    result.push({\n      json: {\n        ...item.json,\n        limit_exceeded: true,\n        telegram_answer: 'Не удалось определить пользователя.'\n      }\n    });\n    continue;\n  }\n\n  // Служебные команды пока не расходуют лимит\n  const isServiceCommand = ['/reset']\n  .includes(question.toLowerCase());\n\n  // Дневной лимит считается по московскому времени.\nconst currentDate = new Intl.DateTimeFormat('en-CA', {\n  timeZone: 'Europe/Moscow',\n  year: 'numeric',\n  month: '2-digit',\n  day: '2-digit'\n}).format(new Date());\n  const usageKey = `${userId}:${currentDate}`;\n\n  const used = Number(staticData.dailyUsage[usageKey] || 0);\n\n  if (isServiceCommand) {\n    result.push({\n      json: {\n        ...item.json,\n        limit_exceeded: false,\n        is_service_command: true,\n        requests_used: used,\n        requests_left: Math.max(LIMIT - used, 0)\n      }\n    });\n    continue;\n  }\n\n  if (used >= LIMIT) {\n  result.push({\n    json: {\n      ...item.json,\n      limit_exceeded: true,\n      is_service_command: false,\n      requests_used: used,\n      requests_left: 0,\n      telegram_answer:\n        `На сегодня вы использовали лимит из ${LIMIT} вопросов. Новый лимит будет доступен завтра.`\n    }\n  });\n\n  continue;\n}\n\n  staticData.dailyUsage[usageKey] = used + 1;\n\n  result.push({\n    json: {\n      ...item.json,\n      limit_exceeded: false,\n      is_service_command: false,\n      requests_used: used + 1,\n      requests_left: LIMIT - used - 1\n    }\n  });\n}\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        176,
+        -48
+      ],
+      "id": "0804abb1-9347-4d3e-983c-53e928c1b427",
+      "name": "Check daily user limit"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "59bd285e-8792-491a-ae36-959c748f0aac",
+              "leftValue": "={{ $json.limit_exceeded.toBoolean() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        352,
+        -48
+      ],
+      "id": "80ab7b63-de82-45f1-adff-f28290b39ffb",
+      "name": "Is daily limit exceeded?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\n\nif (!staticData.dialogues) {\n  staticData.dialogues = {};\n}\n\nconst MAX_MESSAGES = 6;\nconst MEMORY_TTL_HOURS = 24;\nconst now = Date.now();\n\nreturn $input.all().map(item => {\n  const chatId = String(item.json.chat_id || '');\n  const userId = String(item.json.user_id || '');\n\n  const dialogueKey = `${chatId}:${userId}`;\n\n  const storedHistory = Array.isArray(staticData.dialogues[dialogueKey])\n    ? staticData.dialogues[dialogueKey]\n    : [];\n\n  // Оставляем только сообщения не старше 24 часов\n  const validHistory = storedHistory.filter(message => {\n    const timestamp = new Date(message.timestamp || 0).getTime();\n\n    return (\n      Number.isFinite(timestamp) &&\n      now - timestamp <= MEMORY_TTL_HOURS * 60 * 60 * 1000\n    );\n  });\n\n  // Сохраняем очищенную историю обратно\n  staticData.dialogues[dialogueKey] = validHistory.slice(-MAX_MESSAGES);\n\n  return {\n    json: {\n      ...item.json,\n      dialogue_key: dialogueKey,\n      dialogue_history: validHistory.slice(-MAX_MESSAGES),\n      has_dialogue_history: validHistory.length > 0\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16,
+        400
+      ],
+      "id": "fdf4247f-256e-4652-a6e3-dbee4589609f",
+      "name": "Load dialogue memory"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nreturn items.map((item) => {\n  const originalQuestion = String(\n    item.json.user_question || item.json.question || ''\n  ).trim();\n\n  const question = originalQuestion.toLowerCase();\n\n  const hasHistory =\n    item.json.has_dialogue_history === true ||\n    item.json.has_dialogue_history === 'true';\n\n  const words = question\n    .replace(/[?!.,;:()[\\]\"«»]/g, ' ')\n    .split(/\\s+/)\n    .filter((word) => word.length > 0);\n\n  /*\n   * Для русского текста не используем \\b.\n   * Конец слова проверяем через (?=\\s|$|[?!.,;:])\n   */\n  const end = '(?=\\\\s|$|[?!.,;:])';\n\n  const followUpStarts = [\n    new RegExp(`^а\\\\s+если${end}`, 'u'),\n    new RegExp(`^а\\\\s+как${end}`, 'u'),\n    new RegExp(`^а\\\\s+кто${end}`, 'u'),\n    new RegExp(`^а\\\\s+почему${end}`, 'u'),\n    new RegExp(`^а\\\\s+что${end}`, 'u'),\n    new RegExp(`^а\\\\s+можно${end}`, 'u'),\n    new RegExp(`^а\\\\s+тогда${end}`, 'u'),\n    new RegExp(`^и\\\\s+что${end}`, 'u'),\n    new RegExp(`^и\\\\s+как${end}`, 'u'),\n    new RegExp(`^но\\\\s+если${end}`, 'u'),\n    new RegExp(`^тогда${end}`, 'u'),\n    new RegExp(`^то\\\\s+есть${end}`, 'u')\n  ];\n\n  const contextReferencePatterns = [\n    /(^|[\\s?!.,;:])это(?=$|[\\s?!.,;:])/u,\n    /(^|[\\s?!.,;:])этот(?=$|[\\s?!.,;:])/u,\n    /(^|[\\s?!.,;:])эта(?=$|[\\s?!.,;:])/u,\n    /(^|[\\s?!.,;:])эти(?=$|[\\s?!.,;:])/u,\n    /(^|[\\s?!.,;:])этого(?=$|[\\s?!.,;:])/u,\n    /(^|[\\s?!.,;:])этому(?=$|[\\s?!.,;:])/u,\n    /(^|[\\s?!.,;:])так(?=$|[\\s?!.,;:])/u,\n    /(^|[\\s?!.,;:])такой(?=$|[\\s?!.,;:])/u,\n    /(^|[\\s?!.,;:])такое(?=$|[\\s?!.,;:])/u,\n    /(^|[\\s?!.,;:])тогда(?=$|[\\s?!.,;:])/u,\n    /(^|[\\s?!.,;:])там(?=$|[\\s?!.,;:])/u,\n    /(^|[\\s?!.,;:])он(?=$|[\\s?!.,;:])/u,\n    /(^|[\\s?!.,;:])она(?=$|[\\s?!.,;:])/u,\n    /(^|[\\s?!.,;:])они(?=$|[\\s?!.,;:])/u,\n    /(^|[\\s?!.,;:])его(?=$|[\\s?!.,;:])/u,\n    /(^|[\\s?!.,;:])её(?=$|[\\s?!.,;:])/u,\n    /(^|[\\s?!.,;:])их(?=$|[\\s?!.,;:])/u,\n    /с\\s+этим/u,\n    /в\\s+этом\\s+случае/u,\n    /в\\s+таком\\s+случае/u\n  ];\n\n  const shortFollowUps = [\n    /^почему[?!.,]*$/u,\n    /^зачем[?!.,]*$/u,\n    /^как[?!.,]*$/u,\n    /^кто[?!.,]*$/u,\n    /^когда[?!.,]*$/u,\n    /^где[?!.,]*$/u,\n    /^что\\s+делать[?!.,]*$/u,\n    /^что\\s+тогда[?!.,]*$/u,\n    /^и\\s+что[?!.,]*$/u,\n    /^а\\s+дальше[?!.,]*$/u,\n    /^можно\\s+подробнее[?!.,]*$/u,\n    /^объясни\\s+подробнее[?!.,]*$/u\n  ];\n\n  const startsAsFollowUp = followUpStarts.some((pattern) =>\n    pattern.test(question)\n  );\n\n  const refersToContext = contextReferencePatterns.some((pattern) =>\n    pattern.test(question)\n  );\n\n  const isExplicitShortFollowUp = shortFollowUps.some((pattern) =>\n    pattern.test(question)\n  );\n\n  const isShortContextualQuestion =\n    words.length <= 6 && refersToContext;\n\n  const needsHistory =\n    hasHistory &&\n    (\n      startsAsFollowUp ||\n      isExplicitShortFollowUp ||\n      isShortContextualQuestion\n    );\n\n  return {\n    json: {\n      ...item.json,\n      needs_history: needsHistory,\n      search_question: originalQuestion,\n      answer_question: originalQuestion,\n      search_query: originalQuestion,\n      follow_up_detection: {\n        has_history: hasHistory,\n        starts_as_follow_up: startsAsFollowUp,\n        refers_to_context: refersToContext,\n        explicit_short_follow_up: isExplicitShortFollowUp,\n        short_contextual_question: isShortContextualQuestion,\n        word_count: words.length\n      }\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        400
+      ],
+      "id": "7160ddf1-4070-4b87-820a-76db9be5f540",
+      "name": "Detect follow-up question"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "91cad968-8c32-4bc0-b4fe-246043002d28",
+              "leftValue": "={{ $json.needs_history.toBoolean() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        288,
+        400
+      ],
+      "id": "739399a1-191f-47df-9709-07304cd7c276",
+      "name": "Needs dialogue history?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\nmodel: 'gpt-4.1-mini',\ntemperature: 0,\nmax_tokens: 220,\nresponse_format: {\ntype: 'json_object'\n},\nmessages: [\n{\nrole: 'system',\ncontent: `Ты восстанавливаешь смысл уточняющего вопроса пользователя для RAG-системы по НПД.\n\nВерни только JSON строго с двумя строковыми полями:\n\n{\n\"answer_question\": \"самостоятельный вопрос для ответа пользователю\",\n\"search_query\": \"поисковый запрос для поиска документов\"\n}\n\nГлавное различие:\n\nanswer_question сохраняет только то намерение, которое явно выразил пользователь.\n\nsearch_query может быть шире и содержать дополнительные ключевые слова, необходимые для поиска релевантных документов.\n\nПравила для answer_question:\n\n1. Сделай текущий вопрос понятным без истории диалога.\n2. Восстанови только пропущенный предмет обсуждения и ссылки вроде «это», «так», «он», «кто», «тогда».\n3. Сохрани тип вопроса пользователя:\n\n   * «кто» остаётся вопросом о том, кто;\n   * «почему» остаётся вопросом о причине;\n   * «можно ли» остаётся вопросом о допустимости;\n   * «что делать» остаётся вопросом о необходимых действиях;\n   * «а если» остаётся вопросом об указанном условии;\n   * «когда» остаётся вопросом о сроке или моменте;\n   * «что будет» остаётся вопросом о последствиях.\n4. Не добавляй новые подвопросы, которых пользователь не задавал.\n5. Не добавляй «по каким критериям», «почему», «что делать», «какие последствия», «какие исключения» или другие аспекты, если их не было в текущем вопросе.\n6. Не отвечай на вопрос и не добавляй факты.\n7. Не называй конкретный орган, закон, лицо или правило, если пользователь сам этого не указал и это не требуется только для восстановления предмета вопроса.\n8. Не меняй степень уверенности и смысл вопроса.\n9. answer_question должен содержать один вопрос и одно намерение.\n10. Не заменяй вопрос пользователя более общим вопросом по теме.\n11. Не повторяй предыдущий вопрос вместо текущего уточнения.\n\nПравила для search_query:\n\n1. Используй предмет предыдущего диалога и смысл текущего вопроса.\n2. Добавляй только нейтральные термины и синонимы, которые описывают тему вопроса.\n3. Для вопроса «кто» ищи документы, содержащие правило, порядок определения или компетенцию, но не предполагай заранее, что существует орган, проверка или индивидуальное решение.\n4. Для вопроса «почему» добавляй термины о причине и основании.\n5. Для вопроса «а если» добавляй только указанное пользователем условие и основной предмет обсуждения.\n6. Для вопроса «когда» добавляй термины о сроке, дате или моменте.\n7. Для вопроса «что делать» добавляй термины о порядке действий или процедуре.\n8. Для вопроса «что будет» добавляй термины о последствиях.\n9. Не добавляй предполагаемый ответ, вывод или конкретного субъекта ответа.\n10. Не добавляй слова «контроль», «проверка», «принимает решение», «налоговый орган», «ФНС», «суд» или название закона, если они прямо не присутствуют в текущем вопросе или истории.\n11. Не расширяй поиск на последствия, исключения и порядок действий, если пользователь об этом не спрашивал.\n12. search_query должен оставаться коротким: основной предмет, тип вопроса и несколько ключевых терминов.\n13. search_query не должен предполагать, кто является ответом на вопрос «кто».\n14. Не включай в search_query длинный пересказ предыдущего ответа.\n\nКонтроль перед возвратом JSON:\n\n* answer_question должен быть понятен без истории;\n* answer_question не должен быть шире текущего вопроса;\n* answer_question должен сохранять тип и намерение текущего вопроса;\n* дополнительные поисковые уточнения должны находиться только в search_query;\n* search_query не должен содержать предполагаемый ответ;\n* если из истории нельзя однозначно восстановить ссылку, не придумывай предмет вопроса.`  },\n    {\n      role: 'user',\n      content:`ПРЕДЫДУЩИЕ СООБЩЕНИЯ:\n  ${JSON.stringify(($json.dialogue_history || []).slice(-2), null, 2)}\n\nТЕКУЩИЙ ВОПРОС:\n${$json.user_question || ''}`\n}\n]\n}) }}\n",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        528,
+        288
+      ],
+      "id": "1ddc449e-80dd-421d-8c42-20d44c652728",
+      "name": "Rewrite follow-up question",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "VITGTgYIIrgrjJKA",
+          "name": "OpenAI Header Auth - NPD MVP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $('Detect follow-up question').first().json;\nconst response = $input.first().json;\n\nconst rawContent =\n  response.choices?.[0]?.message?.content || '{}';\n\nlet parsed = {};\n\ntry {\n  parsed = JSON.parse(rawContent);\n} catch (error) {\n  parsed = {};\n}\n\nconst answerQuestion = String(\n  parsed.answer_question || source.user_question || ''\n).trim();\n\nconst searchQuery = String(\n  parsed.search_query ||\n  parsed.answer_question ||\n  source.user_question ||\n  ''\n).trim();\n\nreturn [\n  {\n    json: {\n      ...source,\n\n      answer_question: answerQuestion,\n      search_query: searchQuery,\n\n      // Оставим для совместимости со старыми узлами\n      search_question: searchQuery,\n\n      question_was_rewritten:\n        Boolean(parsed.answer_question || parsed.search_query),\n\n      rewrite_raw_response: rawContent\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        528,
+        480
+      ],
+      "id": "ee7ccb5f-9b60-417d-b121-fc9df51cefde",
+      "name": "Set rewritten search question"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "fabff622-80ce-444d-a9c4-0530a50db199",
+              "leftValue": "={{ $json.service_handled }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        240,
+        176
+      ],
+      "id": "4ee157e0-2ae0-4888-bdb1-34b95442c3ac",
+      "name": "Is /reset handled?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\n\nif (!staticData.dialogues) {\n  staticData.dialogues = {};\n}\n\nreturn $input.all().map(item => {\n  const question = String(\n    item.json.user_question ||\n    item.json.question ||\n    ''\n  ).trim();\n\n  const chatId = String(item.json.chat_id || '');\n  const userId = String(item.json.user_id || '');\n\n  const isResetCommand =\n    /^\\/reset(?:@\\w+)?$/i.test(question);\n\n  if (!isResetCommand) {\n    return {\n      json: {\n        ...item.json,\n        service_handled: false\n      }\n    };\n  }\n\n  const dialogueKey = `${chatId}:${userId}`;\n\n  const previousMessages = Array.isArray(\n    staticData.dialogues[dialogueKey]\n  )\n    ? staticData.dialogues[dialogueKey].length\n    : 0;\n\n  delete staticData.dialogues[dialogueKey];\n\n  return {\n    json: {\n      ...item.json,\n      dialogue_key: dialogueKey,\n      dialogue_history: [],\n      has_dialogue_history: false,\n      service_handled: true,\n      service_command: 'reset',\n      cleared_messages: previousMessages,\n      answer: 'История диалога очищена. Можете начать новую тему.',\n      telegram_answer: 'История диалога очищена. Можете начать новую тему.',\n      status: 'service_command',\n      sources: []\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        176
+      ],
+      "id": "3cc69007-725e-465c-bbae-3c702c152d42",
+      "name": "Handle /reset"
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\n\nif (!staticData.dialogues) {\n  staticData.dialogues = {};\n}\n\nconst MAX_MESSAGES = 6;\nconst MAX_USER_LENGTH = 700;\nconst MAX_ASSISTANT_LENGTH = 1800;\n\nreturn $input.all().map(item => {\n  const chatId = String(item.json.chat_id || '');\n  const userId = String(item.json.user_id || '');\n\n  const userQuestion = String(\n    item.json.user_question ||\n    item.json.question ||\n    ''\n  ).trim();\n\n  const assistantAnswer = String(\n    item.json.telegram_answer ||\n    item.json.answer ||\n    ''\n  ).trim();\n\n  if (!chatId || !userId || !userQuestion || !assistantAnswer) {\n    return {\n      json: {\n        ...item.json,\n        memory_saved: false,\n        memory_error:\n          'Не хватает chat_id, user_id, user_question или ответа'\n      }\n    };\n  }\n\n  const dialogueKey =\n    item.json.dialogue_key || `${chatId}:${userId}`;\n\n  const history = Array.isArray(staticData.dialogues[dialogueKey])\n    ? staticData.dialogues[dialogueKey]\n    : [];\n\n  const timestamp = new Date().toISOString();\n\n  history.push({\n    role: 'user',\n    content: userQuestion.slice(0, MAX_USER_LENGTH),\n    timestamp\n  });\n\n  history.push({\n    role: 'assistant',\n    content: assistantAnswer.slice(0, MAX_ASSISTANT_LENGTH),\n    timestamp\n  });\n\n  staticData.dialogues[dialogueKey] = history.slice(-MAX_MESSAGES);\n\n  return {\n    json: {\n      ...item.json,\n      dialogue_key: dialogueKey,\n      memory_saved: true,\n      dialogue_memory_size:\n        staticData.dialogues[dialogueKey].length\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1936,
+        368
+      ],
+      "id": "130d71dc-d83d-4360-b0a6-014d57557023",
+      "name": "Save dialogue memory"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule polling trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Telegram getUpdates Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram getUpdates": {
+      "main": [
+        [
+          {
+            "node": "Parse Telegram Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Telegram Updates": {
+      "main": [
+        [
+          {
+            "node": "Check daily user limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach run id": {
+      "main": [
+        [
+          {
+            "node": "Safety guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Safety guard": {
+      "main": [
+        [
+          {
+            "node": "Is blocked request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is blocked request?": {
+      "main": [
+        [
+          {
+            "node": "Format blocked answer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "OpenAI query embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format blocked answer": {
+      "main": [
+        [
+          {
+            "node": "Telegram sendMessage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI query embedding": {
+      "main": [
+        [
+          {
+            "node": "Build Qdrant search body",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build MINI-WIKI search body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Qdrant search body": {
+      "main": [
+        [
+          {
+            "node": "Qdrant RAW search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant RAW search": {
+      "main": [
+        [
+          {
+            "node": "Format search results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format search results": {
+      "main": [
+        [
+          {
+            "node": "Build retrieved context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build retrieved context": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Build MINI-WIKI search body": {
+      "main": [
+        [
+          {
+            "node": "Qdrant MINI-WIKI search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant MINI-WIKI search": {
+      "main": [
+        [
+          {
+            "node": "Format MINI-WIKI results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format MINI-WIKI results": {
+      "main": [
+        [
+          {
+            "node": "Build MINI-WIKI context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build MINI-WIKI context": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "OpenAI generate answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI generate answer": {
+      "main": [
+        [
+          {
+            "node": "Format final answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format final answer": {
+      "main": [
+        [
+          {
+            "node": "Save dialogue memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Telegram getUpdates Request": {
+      "main": [
+        [
+          {
+            "node": "Telegram getUpdates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check daily user limit": {
+      "main": [
+        [
+          {
+            "node": "Is daily limit exceeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is daily limit exceeded?": {
+      "main": [
+        [
+          {
+            "node": "Telegram sendMessage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle /reset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load dialogue memory": {
+      "main": [
+        [
+          {
+            "node": "Detect follow-up question",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect follow-up question": {
+      "main": [
+        [
+          {
+            "node": "Needs dialogue history?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs dialogue history?": {
+      "main": [
+        [
+          {
+            "node": "Rewrite follow-up question",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Attach run id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rewrite follow-up question": {
+      "main": [
+        [
+          {
+            "node": "Set rewritten search question",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set rewritten search question": {
+      "main": [
+        [
+          {
+            "node": "Attach run id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle /reset": {
+      "main": [
+        [
+          {
+            "node": "Is /reset handled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is /reset handled?": {
+      "main": [
+        [
+          {
+            "node": "Telegram sendMessage",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load dialogue memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save dialogue memory": {
+      "main": [
+        [
+          {
+            "node": "Telegram sendMessage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "82f4f218-24ef-42c2-9457-25744047ebcb",
+  "meta": {
+    "instanceId": "4eb5de99b81849cb7e66b940fd2d5eb165679e16b8bebc4b8adf70cd2cee4680"
+  },
+  "id": "GQpfqFUL1Mr19PMI",
+  "tags": []
+}
