@@ -159,19 +159,27 @@ Mini-Wiki:
 n8n/workflows/
 ```
 
-Основные workflow:
+### Актуальные workflow
 
 ```text
 NPD Ingestion v1
-NPD Retrieval Test v1
 NPD Evaluation Runner v0.3
 NPD Telegram Polling Assistant
 ```
+
+### Архивные workflow
+
+```text
+NPD Retrieval Test v1
+```
+
+Архивный workflow сохранён только для истории разработки и не должен использоваться для финальной оценки или пользовательского контура.
 
 Подробное описание:
 
 ```text
 n8n/workflows_readme.md
+n8n/workflows/archive/README.md
 ```
 
 ## Структура репозитория
@@ -186,8 +194,8 @@ knowledge_base/
 prompts/                  # системные промпты
 tests/                    # golden dataset и результаты тестов
 n8n/
-  workflows/              # экспортированные n8n workflow
-  workflows_readme.md     # описание workflow
+  workflows/              # актуальные и архивные n8n workflow
+  workflows_readme.md     # описание и статусы workflow
   credentials_required.md # необходимые credentials
   qdrant_setup.md         # настройка Qdrant
 logs/                     # changelog и эксплуатационные заметки
